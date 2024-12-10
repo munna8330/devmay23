@@ -1,0 +1,167 @@
+To use Salesforce Authorization via JWT (server-based authentication) in GitHub Actions, the process involves using the Salesforce CLI (sfdx) and a JWT (JSON Web Token) for authentication. The Salesforce authorization will be handled using a private key (generated during the creation of a connected app in Salesforce) and a JWT token.
+
+Here’s an updated workflow for Salesforce Authorization via Server in GitHub Actions:
+
+Steps to Update the Salesforce Authorization Process in the GitHub Actions Workflow:
+
+1. Generate a Salesforce Connected App
+
+In Salesforce, create a Connected App and enable OAuth settings.
+
+Add the following required permissions:
+
+API Enabled
+
+Full Access
+
+Refresh Token Access
+
+
+Generate a Consumer Key (Client ID) and Consumer Secret.
+
+
+
+2. Create the JWT and Private Key
+
+JWT will be signed using a private key. You can create the private key with the following command:
+
+openssl genpkey -algorithm RSA -out server.key -pkeyopt rsa_keygen_bits:2048
+
+Add the public key to the connected app in Salesforce.
+
+
+
+3. GitHub Secrets
+Store the following in your GitHub repository secrets:
+
+SALESFORCE_CLIENT_ID (Connected App Consumer Key)
+
+SALESFORCE_USERNAME (Salesforce user with API access)
+
+SALESFORCE_INSTANCE_URL (Salesforce instance URL, e.g., https://login.salesforce.com)
+
+SERVER_KEY (The private key generated above, stored as a secret)
+
+
+
+
+
+---
+
+Updated GitHub Actions Workflow (ci-salesforce.yml)
+
+name: CI Pipeline with Salesforce Deployment
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+      - feature/*
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v2
+
+      - name: Set Up Java
+        uses: actions/setup-java@v2
+        with:
+          java-version: '11'
+
+      - name: Run Build
+        run: |
+          ./gradlew build   # Replace with your build command
+
+      - name: SonarQube Analysis
+        env:
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          ./gradlew sonarqube \
+            -Dsonar.projectKey=your_project_key \
+            -Dsonar.organization=your_org \
+            -Dsonar.host.url=$SONAR_HOST_URL \
+            -Dsonar.login=$SONAR_TOKEN
+
+      - name: Checkmarx Scan
+        env:
+          CHECKMARX_API_KEY: ${{ secrets.CHECKMARX_API_KEY }}
+          CHECKMARX_PROJECT_ID: ${{ secrets.CHECKMARX_PROJECT_ID }}
+        run: |
+          checkmarx scan \
+            --project $CHECKMARX_PROJECT_ID \
+            --api-key $CHECKMARX_API_KEY
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Save private key
+        run: |
+          echo "${{ secrets.SERVER_KEY }}" > server.key
+          chmod 600 server.key
+
+      - name: Authorize Salesforce Org via JWT
+        run: |
+          echo "Authenticating Salesforce Org via JWT..."
+          sfdx auth:jwt:grant \
+            --clientid ${{ secrets.SALESFORCE_CLIENT_ID }} \
+            --jwtkeyfile ./server.key \
+            --username ${{ secrets.SALESFORCE_USERNAME }} \
+            --instanceurl ${{ secrets.SALESFORCE_INSTANCE_URL }}
+
+      - name: Deploy to Salesforce
+        run: |
+          echo "Deploying to Salesforce..."
+          sfdx force:source:deploy -x manifest/package.xml -u ${{ secrets.SALESFORCE_USERNAME }}
+
+
+---
+
+Explanation of Key Steps:
+
+Save Private Key:
+
+The private key is stored securely in the GitHub secrets (SERVER_KEY), then written to a file (server.key) with restricted permissions (chmod 600).
+
+
+Authorize Salesforce Org via JWT:
+
+sfdx auth:jwt:grant is used to authenticate Salesforce using the JWT method. It requires the clientid (Consumer Key), jwtkeyfile (private key), username, and instanceurl (Salesforce instance URL).
+
+
+Deploy to Salesforce:
+
+Once authenticated, the Salesforce deployment is done using the sfdx force:source:deploy command, which deploys metadata specified in the package.xml manifest.
+
+
+
+
+---
+
+Additional Setup:
+
+1. Install Salesforce CLI on GitHub Actions Runner:
+If the Salesforce CLI (sfdx) is not installed, you can add a step to install it before performing the deployment:
+
+- name: Install Salesforce CLI
+  run: |
+    curl https://install.salesforce.com/sfdx-cli/install | bash
+    export PATH=~/sfdx/bin:$PATH
+
+
+2. Configure the Manifest for Deployment:
+Ensure your manifest/package.xml is configured to include all the Salesforce metadata you want to deploy (such as Apex classes, Lightning components, etc.).
+
+
+
+
+---
+
+This approach allows Salesforce authorization to be handled via JWT, using a private key for secure server-based authentication. Let me know if you need further assistance!
+
